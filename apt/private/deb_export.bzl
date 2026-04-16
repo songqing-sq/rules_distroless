@@ -31,12 +31,23 @@ def _deb_export_impl(ctx):
     for i, symlink_path in enumerate(self_symlink_keys):
         target_path = ctx.attr.self_symlinks[symlink_path]
 
-        # Find the target File object in outs
+        # Find the target File object in outs, self_symlink outputs, or foreign_symlink outputs
         target_file = None
         for f in ctx.outputs.outs:
             if f.short_path[len(f.owner.repo_name) + 4:] == target_path:
                 target_file = f
                 break
+        if target_file == None:
+            for j, other_path in enumerate(self_symlink_keys):
+                if other_path == target_path:
+                    target_file = ctx.outputs.symlink_outs[foreign_symlink_count + j]
+                    break
+        if target_file == None:
+            for j in range(foreign_symlink_count):
+                f = ctx.outputs.symlink_outs[j]
+                if f.short_path[len(f.owner.repo_name) + 4:] == target_path:
+                    target_file = f
+                    break
         if target_file != None:
             ctx.actions.symlink(
                 output = ctx.outputs.symlink_outs[foreign_symlink_count + i],
