@@ -69,7 +69,7 @@ def _deb_export_impl(ctx):
             content = content,
         )
         ctx.actions.run_shell(
-            inputs = [template_file],
+            inputs = [template_file] + ctx.files.linkscript_deps,
             outputs = [ls_out],
             command = 'sed "s|\\$\\$BINDIR|$(pwd)/{bindir}|g" "{tpl}" > "{out}"'.format(
                 bindir = ctx.bin_dir.path,
@@ -110,7 +110,8 @@ def _deb_export_impl(ctx):
             ctx.outputs.outs +
             ctx.outputs.symlink_outs +
             ctx.outputs.linkscript_outs +
-            ctx.files.foreign_symlinks,
+            ctx.files.foreign_symlinks +
+            ctx.files.linkscript_deps,
         ),
     )
 
@@ -127,6 +128,8 @@ deb_export = rule(
         # mapping of linkscript path -> rewritten content
         "linkscripts": attr.string_dict(),
         "linkscript_outs": attr.output_list(),
+        # external files referenced by linkscripts
+        "linkscript_deps": attr.label_list(allow_files = True),
     },
     toolchains = [
         TAR_TOOLCHAIN_TYPE,

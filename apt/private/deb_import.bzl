@@ -44,6 +44,7 @@ deb_export(
     outs = {outs},
     linkscripts = {linkscripts},
     linkscript_outs = {linkscript_outs},
+    linkscript_deps = {linkscript_deps},
     visibility = ["//visibility:public"]
 )
 
@@ -159,6 +160,7 @@ def _discover_contents(rctx, depends_on, depends_file_map, target_name):
     pc_files = []
     o_files = []
     linkscripts = []
+    linkscript_dep_labels = []
     symlinks = {}
 
     for line in contents_raw:
@@ -319,6 +321,21 @@ def _discover_contents(rctx, depends_on, depends_file_map, target_name):
                         if found and abs_path not in replacements:
                             replacements[abs_path] = "$$BINDIR/external/{}/{}".format(rctx.attr.name, self_file)
 
+                    # Collect foreign dep labels from replacements
+                    for (abs_path, replacement) in replacements.items():
+                        # Foreign deps are from other repos (not self package)
+                        rel_path = abs_path.lstrip("/")
+                        if rel_path in file_to_repo:
+                            repo = file_to_repo[rel_path]
+
+                            # Strip repo_prefix to get the apparent name visible from this repo
+                            apparent_repo = repo
+                            if repo_prefix and repo.startswith(repo_prefix):
+                                apparent_repo = repo[len(repo_prefix):]
+                            label = "@{}//:{}".format(apparent_repo, rel_path)
+                            if label not in linkscript_dep_labels:
+                                linkscript_dep_labels.append(label)
+
                     # Replace longest paths first to prevent shorter paths from
                     # matching as substrings of longer ones
                     rewritten = content
@@ -423,7 +440,7 @@ so_library(
             name = target_name,
             hdrs = h_files + hpp_files,
             additional_compiler_inputs = hpp_files_woext,
-            additional_linker_inputs = so_files + linkscript_paths + o_files,
+            additional_linker_inputs = so_files + linkscript_paths + o_files + linkscript_dep_labels,
             linkopts = {
                 opt: True
                 for opt in [
@@ -452,7 +469,7 @@ so_library(
             name = target_name,
             hdrs = h_files + hpp_files,
             additional_compiler_inputs = hpp_files_woext,
-            additional_linker_inputs = so_files + linkscript_paths + a_files + o_files,
+            additional_linker_inputs = so_files + linkscript_paths + a_files + o_files + linkscript_dep_labels,
             includes = [],
         )
     else:
@@ -466,7 +483,7 @@ so_library(
             hdrs = h_files + hpp_files,
             deps = deps,
             additional_compiler_inputs = hpp_files_woext,
-            additional_linker_inputs = so_files + linkscript_paths + o_files,
+            additional_linker_inputs = so_files + linkscript_paths + o_files + linkscript_dep_labels,
             linkopts = [
                 # Required for linker to find .so libraries
                 "-L$(BINDIR)/external/{}/{}".format(rctx.attr.name, rp)
@@ -487,7 +504,7 @@ so_library(
             direct_deps = [":_so_libs"],
         )
 
-    return (build_file_content, outs, foreign_symlinks, self_symlinks, linkscripts)
+    return (build_file_content, outs, foreign_symlinks, self_symlinks, linkscripts, linkscript_dep_labels)
 
 def _deb_import_impl(rctx):
     rctx.download_and_extract(
@@ -496,7 +513,7 @@ def _deb_import_impl(rctx):
     )
 
     # TODO: only do this if package is -dev or dependent of a -dev pkg.
-    cc_import_targets, outs, symlinks, self_symlinks, linkscripts = _discover_contents(
+    cc_import_targets, outs, symlinks, self_symlinks, linkscripts, linkscript_dep_labels = _discover_contents(
         rctx,
         rctx.attr.depends_on,
         json.decode(rctx.attr.depends_file_map),
@@ -529,6 +546,7 @@ def _deb_import_impl(rctx):
         symlink_outs = symlinks.keys() + self_symlinks.keys(),
         linkscripts = linkscripts_dict,
         linkscript_outs = linkscript_outs,
+        linkscript_deps = linkscript_dep_labels,
     ))
 
 deb_import = repository_rule(
