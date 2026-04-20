@@ -54,24 +54,35 @@ def _deb_export_impl(ctx):
                 target_file = target_file,
             )
 
+    # Generate linkscript files with rewritten content
+    # Write a template file with $$BINDIR placeholder, then replace at execution
+    # time with the absolute path (pwd + bin_dir.path) since analysis-time paths
+    # are relative.
+    for ls_out in ctx.outputs.linkscript_outs:
+        ls_path = ls_out.short_path[len(ls_out.owner.repo_name) + 4:]
+        content = ctx.attr.linkscripts.get(ls_path, "")
+
+        # Write template with placeholder to an intermediate file
+        template_file = ctx.actions.declare_file(ls_out.basename + ".tpl", sibling = ls_out)
+        ctx.actions.write(
+            output = template_file,
+            content = content,
+        )
+        ctx.actions.run_shell(
+            inputs = [template_file],
+            outputs = [ls_out],
+            command = 'sed "s|\\$\\$BINDIR|$(pwd)/{bindir}|g" "{tpl}" > "{out}"'.format(
+                bindir = ctx.bin_dir.path,
+                tpl = template_file.path,
+                out = ls_out.path,
+            ),
+            mnemonic = "LinkScript",
+            execution_requirements = {"no-sandbox": "1"},
+        )
+
     if len(ctx.outputs.outs):
         fout = ctx.outputs.outs[0]
         output_base = fout.path[:fout.path.find(fout.owner.repo_name) + len(fout.owner.repo_name)]
-        fix_linker_scripts_cmd = """
-find "{output_base}" -name "*.so" -type f | while read f; do
-    if grep -qE "^(GROUP|INPUT|OUTPUT_FORMAT)" "$f" 2>/dev/null; then
-        sed -i \\
-            -e 's|/usr/lib/x86_64-linux-gnu/||g' \\
-            -e 's|/lib/x86_64-linux-gnu/||g' \\
-            -e 's|/usr/lib/aarch64-linux-gnu/||g' \\
-            -e 's|/lib/aarch64-linux-gnu/||g' \\
-            -e 's|/usr/lib/||g' \\
-            -e 's|/lib64/||g' \\
-            -e 's|/lib/||g' \\
-            "$f" 2>/dev/null || true
-    fi
-done
-""".format(output_base = output_base)
         args = ctx.actions.args()
         args.add_all(ctx.files.srcs)
         args.add(output_base)
@@ -86,13 +97,11 @@ done
             tools = [bsdtar.tarinfo.binary],
             command = """
                 "{tar}" -xf $1 -C $2 "${{@:3}}"
-                {fix_scripts}
             """.format(
                 tar = bsdtar.tarinfo.binary.path,
-                fix_scripts = fix_linker_scripts_cmd,
             ),
             arguments = [args],
-            mnemonic = "UnpackAndFixScripts",
+            mnemonic = "Unpack",
             toolchain = TAR_TOOLCHAIN_TYPE,
         )
 
@@ -100,6 +109,7 @@ done
         files = depset(
             ctx.outputs.outs +
             ctx.outputs.symlink_outs +
+            ctx.outputs.linkscript_outs +
             ctx.files.foreign_symlinks,
         ),
     )
@@ -114,6 +124,9 @@ deb_export = rule(
         "self_symlinks": attr.string_dict(),
         "symlink_outs": attr.output_list(),
         "outs": attr.output_list(),
+        # mapping of linkscript path -> rewritten content
+        "linkscripts": attr.string_dict(),
+        "linkscript_outs": attr.output_list(),
     },
     toolchains = [
         TAR_TOOLCHAIN_TYPE,
