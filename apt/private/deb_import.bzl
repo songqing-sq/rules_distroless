@@ -104,6 +104,28 @@ def _get_library_base_name(so_basename):
     return name
 
 
+def _is_top_level_so(so_path):
+    """Check if a .so file is directly in usr/lib/ or usr/lib/x86_64-linux-gnu/.
+
+    Also supports split-usr layouts (e.g. Debian bookworm) where .so files
+    reside in lib/x86_64-linux-gnu/ instead of usr/lib/x86_64-linux-gnu/.
+
+    Excludes files in deeper subdirectories like usr/lib/x86_64-linux-gnu/foo/libbar.so.
+    """
+    for prefix in (
+        "usr/lib/x86_64-linux-gnu/",
+        "usr/lib/aarch64-linux-gnu/",
+        "usr/lib/",
+        "lib/x86_64-linux-gnu/",
+        "lib/aarch64-linux-gnu/",
+        "lib/",
+    ):
+        if so_path.startswith(prefix):
+            remainder = so_path[len(prefix):]
+            return "/" not in remainder
+    return False
+
+
 def _run_readelf(rctx, so_path):
     """Run readelf -dW on a .so file and return list of NEEDED libraries."""
     result = rctx.execute(["readelf", "-dW", so_path])
@@ -408,8 +430,8 @@ def _generate_non_dev_package_content(rctx, so_files, symlinks, file_to_repo, so
     for so_path in so_files:
         if so_path in symlinks:
             continue
-        # Only generate cc_import for .so files under usr/lib/ or lib/
-        if not (so_path.startswith("usr/lib/") or so_path.startswith("lib/")):
+        # Only generate cc_import for .so files directly in usr/lib/ or usr/lib/x86_64-linux-gnu/
+        if not _is_top_level_so(so_path):
             continue
 
         so_basename = _get_so_basename(so_path)
@@ -440,7 +462,7 @@ def _generate_non_dev_package_content(rctx, so_files, symlinks, file_to_repo, so
     for so_path in so_files:
         if so_path not in symlinks:
             continue
-        if not (so_path.startswith("usr/lib/") or so_path.startswith("lib/")):
+        if not _is_top_level_so(so_path):
             continue
 
         so_basename = _get_so_basename(so_path)
@@ -478,7 +500,7 @@ def _generate_non_dev_package_content(rctx, so_files, symlinks, file_to_repo, so
 
     # Generate cc_import for linker script .so files
     for ls_path, ls_deps in linkscript_dep_map.items():
-        if not (ls_path.startswith("usr/lib/") or ls_path.startswith("lib/")):
+        if not _is_top_level_so(ls_path):
             continue
         ls_basename = _get_so_basename(ls_path)
         target_name = _get_cc_import_name(ls_basename)
@@ -639,7 +661,7 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
     for so_path in so_files:
         if so_path in symlinks:
             continue
-        if not (so_path.startswith("usr/lib/") or so_path.startswith("lib/")):
+        if not _is_top_level_so(so_path):
             continue
         so_basename = _get_so_basename(so_path)
         target_name = _get_library_base_name(so_basename)
@@ -721,7 +743,7 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
     for so_path in so_files:
         if so_path not in symlinks:
             continue
-        if not (so_path.startswith("usr/lib/") or so_path.startswith("lib/")):
+        if not _is_top_level_so(so_path):
             continue
 
         so_basename = _get_so_basename(so_path)
@@ -757,7 +779,7 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
     # Collect linkscript target names so cc_library can depend on them
     linkscript_target_names = []
     for ls_path in linkscript_dep_map.keys():
-        if ls_path.startswith("usr/lib/") or ls_path.startswith("lib/"):
+        if _is_top_level_so(ls_path):
             ls_basename = _get_so_basename(ls_path)
             linkscript_target_names.append(_get_library_base_name(ls_basename))
 
@@ -779,7 +801,7 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
 
     # Generate cc_import for linker script .so files
     for ls_path, ls_deps in linkscript_dep_map.items():
-        if not (ls_path.startswith("usr/lib/") or ls_path.startswith("lib/")):
+        if not _is_top_level_so(ls_path):
             continue
         ls_basename = _get_so_basename(ls_path)
         target_name = _get_library_base_name(ls_basename)
