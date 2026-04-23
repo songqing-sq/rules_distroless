@@ -128,7 +128,13 @@ def _is_top_level_so(so_path):
 
 def _run_readelf(rctx, so_path):
     """Run readelf -dW on a .so file and return list of NEEDED libraries."""
-    result = rctx.execute(["readelf", "-dW", so_path])
+    # Force C locale so readelf emits ASCII brackets around library names,
+    # regardless of the build host's locale (e.g., zh_CN would produce full-width
+    # brackets that our parser below cannot match).
+    result = rctx.execute(
+        ["readelf", "-dW", so_path],
+        environment = {"LC_ALL": "C", "LANG": "C"},
+    )
     if result.return_code != 0:
         return []
     needed = []
@@ -315,7 +321,6 @@ def _discover_contents(rctx, depends_on, depends_file_map, target_name):
                     linkscripts.append((f, rewritten))
                     linkscript_dep_map[f] = ls_deps
                     so_files.remove(f)
-                    util.warning(rctx, "detected linker script: {}".format(f))
 
                 rctx.execute(["rm", "-f", f])
 
