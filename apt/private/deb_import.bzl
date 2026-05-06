@@ -593,7 +593,6 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
     all_pc_link_paths = []
     all_pc_defines = []
     all_pc_libnames = []
-    pc_includedir = None
 
     if pc_files:
         rctx.execute(
@@ -607,24 +606,33 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
                 all_pc_link_paths.extend(pkgc.link_paths)
                 all_pc_defines.extend(pkgc.defines)
                 all_pc_libnames.extend(pkgc.libnames)
-                if pkgc.includedir and not pc_includedir:
-                    pc_includedir = pkgc.includedir
         # Cleanup
         for pc_file in pc_files:
             if rctx.path(pc_file).exists:
                 rctx.execute(["rm", "-f", pc_file])
 
-    # Determine includes from .pc (always use strip_include_prefix = "usr/include")
+    # Determine includes from .pc Cflags. `strip_include_prefix = "usr/include"`
+    # already exposes `usr/include/*` as top-level virtual includes, but that
+    # only enables `#include <subdir/foo.h>`. For `#include <foo.h>` where foo.h
+    # lives under `usr/include/<subdir>/`, an additional -I is needed.
+    #
+    # Bazel's `includes` attr produces `-I<pkg>/<entry>` at the physical layout
+    # and does NOT stack with strip_include_prefix, so entries must point at
+    # the real on-disk path (e.g. "usr/include/python3.11").
     hdrs_includes = []
-    if pc_includedir:
-        stripped = pc_includedir
+    seen = {}
+    for inc in all_pc_includes:
+        stripped = inc
         if stripped.startswith("/"):
             stripped = stripped[1:]
-        if stripped != "usr/include":
-            # Strip the usr/include prefix since strip_include_prefix already covers it
-            if stripped.startswith("usr/include/"):
-                stripped = stripped[len("usr/include/"):]
-            hdrs_includes.append(stripped)
+        if stripped == "usr/include":
+            continue  # already covered by strip_include_prefix
+        if not stripped.startswith("usr/include/"):
+            continue  # outside the package; cannot express cleanly here
+        if stripped in seen:
+            continue
+        seen[stripped] = True
+        hdrs_includes.append(stripped)
 
     # 1. Generate hdrs target: directory_glob + cc_library
     hdrs_deps = []
