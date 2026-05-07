@@ -48,6 +48,11 @@ def _deb_export_impl(ctx):
                 if f.short_path[len(f.owner.repo_name) + 4:] == target_path:
                     target_file = f
                     break
+        if target_file == None:
+            for f in ctx.outputs.linkscript_outs:
+                if f.short_path[len(f.owner.repo_name) + 4:] == target_path:
+                    target_file = f
+                    break
         if target_file != None:
             ctx.actions.symlink(
                 output = ctx.outputs.symlink_outs[foreign_symlink_count + i],
