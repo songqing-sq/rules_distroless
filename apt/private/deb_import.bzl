@@ -487,10 +487,9 @@ def _generate_non_dev_package_content(rctx, so_files, symlinks, file_to_repo, so
             target_basename = _get_so_basename(symlink_target)
             actual_target = "@{}//:{}".format(apparent_repo, _get_cc_import_name(target_basename))
         else:
-            # Try to find in this package's non-symlink .so files
+            # Try to find in this package's .so files (including symlink chains,
+            # e.g. libsystemd.so.0 -> libelogind.so.0 -> libelogind.so.0.29.0).
             for other_path in so_files:
-                if other_path in symlinks:
-                    continue
                 if other_path == symlink_target:
                     actual_target = ":{}".format(_get_cc_import_name(_get_so_basename(other_path)))
                     break
@@ -614,23 +613,29 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
             if rctx.path(pc_file).exists:
                 rctx.execute(["rm", "-f", pc_file])
 
-    # Determine includes from .pc Cflags. `strip_include_prefix = "usr/include"`
-    # already exposes `usr/include/*` as top-level virtual includes, but that
-    # only enables `#include <subdir/foo.h>`. For `#include <foo.h>` where foo.h
-    # lives under `usr/include/<subdir>/`, an additional -I is needed.
-    #
-    # Bazel's `includes` attr produces `-I<pkg>/<entry>` at the physical layout
-    # and does NOT stack with strip_include_prefix, so entries must point at
-    # the real on-disk path (e.g. "usr/include/python3.11").
+    # Determine includes from .pc Cflags. We expose package headers via the
+    # `includes` attribute (which Bazel emits as `-isystem <pkg>/<entry>`) so
+    # that GCC treats them as system headers and suppresses warnings like
+    # -Wpacked / -Wconversion under -Werror. We deliberately do NOT use
+    # `strip_include_prefix`: it emits `-I _virtual_includes/...`, and `-I`
+    # is searched before `-isystem`, which would steal the lookup and drop
+    # the system-header status.
     hdrs_includes = []
     seen = {}
+
+    # Always expose usr/include itself so consumers can `#include <pkg/foo.h>`
+    # without depending on a .pc file.
+    hdrs_includes.append("usr/include")
+    seen["usr/include"] = True
+
     for inc in all_pc_includes:
         stripped = inc
         if stripped.startswith("/"):
             stripped = stripped[1:]
-        if stripped == "usr/include":
-            continue  # already covered by strip_include_prefix
-        if not stripped.startswith("usr/include/"):
+        # Accept both `usr/include/...` and arch-specific include dirs under
+        # `usr/lib/...` (e.g. usr/lib/x86_64-linux-gnu/dbus-1.0/include) that
+        # some Debian -dev packages ship and reference from their .pc Cflags.
+        if not (stripped.startswith("usr/include") or stripped.startswith("usr/lib")):
             continue  # outside the package; cannot express cleanly here
         if stripped in seen:
             continue
@@ -672,6 +677,12 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
     lines.append('        "usr/include/**/*.h",')
     lines.append('        "usr/include/**/*.hpp",')
     lines.append('        "usr/include/**/*.ipp",')
+    # Some -dev packages ship arch-specific headers under usr/lib/.../include
+    # (e.g. libdbus-1-dev: usr/lib/x86_64-linux-gnu/dbus-1.0/include/dbus/dbus-arch-deps.h).
+    # The .pc Cflags reference this dir and consumers `#include <dbus/dbus-arch-deps.h>`.
+    lines.append('        "usr/lib/**/*.h",')
+    lines.append('        "usr/lib/**/*.hpp",')
+    lines.append('        "usr/lib/**/*.ipp",')
     lines.append('    ],')
     lines.append('    allow_empty = True,')
     lines.append('    directory = ":directory",')
@@ -683,9 +694,10 @@ def _generate_dev_package_content(rctx, so_files, symlinks, h_files, hpp_files, 
     lines.append('cc_library(')
     lines.append('    name = "{}",'.format(hdrs_target_name))
     lines.append('    hdrs = [":hdrs"],')
-    lines.append('    strip_include_prefix = "usr/include",')
-    if hdrs_includes:
-        lines.append('    includes = {},'.format(json.encode_indent(hdrs_includes)))
+    # Use `includes` (-> -isystem) rather than `strip_include_prefix`
+    # (-> -I _virtual_includes/...) so package headers are treated as
+    # system headers; see comment above hdrs_includes.
+    lines.append('    includes = {},'.format(json.encode_indent(hdrs_includes)))
     if hdrs_deps:
         lines.append('    deps = {},'.format(json.encode_indent(hdrs_deps)))
     lines.append('    visibility = ["//visibility:public"],')
