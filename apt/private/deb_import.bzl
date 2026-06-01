@@ -433,6 +433,7 @@ def _generate_non_dev_package_content(rctx, so_files, symlinks, file_to_repo, so
     Linker script .so targets have deps from the parsed linkscript references.
     """
     lines = []
+    seen_targets = {}
 
     # Process non-symlink .so files first
     for so_path in so_files:
@@ -444,6 +445,9 @@ def _generate_non_dev_package_content(rctx, so_files, symlinks, file_to_repo, so
 
         so_basename = _get_so_basename(so_path)
         target_name = _get_cc_import_name(so_basename)
+        if target_name in seen_targets:
+            continue
+        seen_targets[target_name] = so_path
 
         # Resolve NEEDED deps
         needed = so_needed_map.get(so_path, [])
@@ -475,6 +479,9 @@ def _generate_non_dev_package_content(rctx, so_files, symlinks, file_to_repo, so
 
         so_basename = _get_so_basename(so_path)
         target_name = _get_cc_import_name(so_basename)
+        if target_name in seen_targets:
+            continue
+        seen_targets[target_name] = so_path
         symlink_target = symlinks[so_path]
 
         # Find the actual cc_import target
@@ -511,6 +518,9 @@ def _generate_non_dev_package_content(rctx, so_files, symlinks, file_to_repo, so
             continue
         ls_basename = _get_so_basename(ls_path)
         target_name = _get_cc_import_name(ls_basename)
+        if target_name in seen_targets:
+            continue
+        seen_targets[target_name] = ls_path
         deps_str = json.encode_indent(ls_deps) if ls_deps else "[]"
 
         lines.append('cc_import(')
