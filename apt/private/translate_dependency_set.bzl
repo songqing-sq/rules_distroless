@@ -170,7 +170,7 @@ def _translate_dependency_set_impl(rctx):
                 export_targets_seen[package_key] = True
 
             packages_to_architectures.setdefault(
-                package["name"] + "=" + version,
+                package["name"],
                 struct(
                     name = package["name"],
                     architectures = {},
