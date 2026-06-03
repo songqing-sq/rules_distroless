@@ -76,13 +76,12 @@ def _deb_export_impl(ctx):
         ctx.actions.run_shell(
             inputs = [template_file] + ctx.files.linkscript_deps,
             outputs = [ls_out],
-            command = 'sed "s|\\$\\$BINDIR|$(pwd)/{bindir}|g" "{tpl}" > "{out}"'.format(
+            command = 'sed "s|\\$\\$BINDIR|{bindir}|g" "{tpl}" > "{out}"'.format(
                 bindir = ctx.bin_dir.path,
                 tpl = template_file.path,
                 out = ls_out.path,
             ),
             mnemonic = "LinkScript",
-            execution_requirements = {"no-sandbox": "1"},
         )
 
     if len(ctx.outputs.outs):

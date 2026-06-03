@@ -117,7 +117,7 @@ with open(manifest_file, "r") as f:
     return [
         directory_info,
         DefaultInfo(
-            files = depset([output_dir]),
+            files = depset([output_dir] + all_files),
             runfiles = ctx.runfiles(files = [output_dir]),
         ),
     ]
