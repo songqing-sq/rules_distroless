@@ -87,6 +87,26 @@ def _get_so_basename(so_path):
     return so_path[so_path.rfind("/") + 1:]
 
 
+def _abs_path_candidates(rel_path):
+    """Return absolute-path strings that may reference a file installed at
+    rel_path (a path relative to the deb root, e.g. usr/lib/x86_64-linux-gnu/libc.so.6).
+
+    On Debian merged-usr distros (trixie and later) all libc6 binaries live
+    under usr/lib/..., but the linker scripts shipped in libc6 still use the
+    historical /lib/... and /lib64/... spellings, which on a real system are
+    resolved by the /lib -> /usr/lib and /lib64 -> /usr/lib symlinks. Bazel's
+    apt-extracted sysroot has no such symlinks, so this helper teaches the
+    linker-script rewrite logic to recognize both shapes.
+    """
+    canonical = "/" + rel_path
+    candidates = [canonical]
+    if rel_path.startswith("usr/lib/"):
+        candidates.append("/" + rel_path[len("usr/"):])
+    elif rel_path.startswith("usr/lib64/"):
+        candidates.append("/" + rel_path[len("usr/"):])
+    return candidates
+
+
 def _get_cc_import_name(so_basename):
     """Get cc_import target name from so basename, e.g. libfoo.so.1.2.3 -> libfoo.so.1.2.3"""
     return so_basename
@@ -277,35 +297,55 @@ def _discover_contents(rctx, depends_on, depends_file_map, target_name):
                     for (rel_path, repo) in file_to_repo.items():
                         if rel_path.find(".") == -1 or rel_path.endswith("/"):
                             continue
-                        abs_path = "/" + rel_path
-                        found = False
-                        for delim in delimiters:
-                            if (abs_path + delim) in content:
+                        # Try each candidate (canonical + merged-usr equivalent),
+                        # but register only the first one that appears in the
+                        # script. Registering multiple candidates for the same
+                        # underlying file lets a shorter, less specific
+                        # candidate (e.g. /lib/<X>/libfoo.a) match a substring
+                        # inside an already-rewritten longer token from another
+                        # replacement, producing junk like
+                        # ".../usrbazel-out/...libfoo.a".
+                        for abs_path in _abs_path_candidates(rel_path):
+                            found = False
+                            for delim in delimiters:
+                                if (abs_path + delim) in content:
+                                    found = True
+                                    break
+                            if not found and content.endswith(abs_path):
                                 found = True
+                            if found:
+                                if abs_path not in replacements:
+                                    replacements[abs_path] = "$$BINDIR/external/{}/{}".format(repo, rel_path)
                                 break
-                        if not found and content.endswith(abs_path):
-                            found = True
-                        if found:
-                            replacements[abs_path] = "$$BINDIR/external/{}/{}".format(repo, rel_path)
 
                     for self_file in so_files + a_files:
                         if self_file == f:
                             continue
-                        abs_path = "/" + self_file
-                        found = False
-                        for delim in delimiters:
-                            if (abs_path + delim) in content:
+                        for abs_path in _abs_path_candidates(self_file):
+                            found = False
+                            for delim in delimiters:
+                                if (abs_path + delim) in content:
+                                    found = True
+                                    break
+                            if not found and content.endswith(abs_path):
                                 found = True
+                            if found:
+                                if abs_path not in replacements:
+                                    replacements[abs_path] = "$$BINDIR/external/{}/{}".format(rctx.attr.name, self_file)
                                 break
-                        if not found and content.endswith(abs_path):
-                            found = True
-                        if found and abs_path not in replacements:
-                            replacements[abs_path] = "$$BINDIR/external/{}/{}".format(rctx.attr.name, self_file)
 
-                    # Track per-linkscript deps
+                    # Track per-linkscript deps. The candidate that actually
+                    # appears in the script may be either /usr/lib/... or
+                    # /lib/.../lib64/...; file_to_repo is keyed by the on-disk
+                    # usr/... form, so map the latter back before lookup.
                     ls_deps = []
                     for (abs_path, replacement) in replacements.items():
                         rel_path = abs_path.lstrip("/")
+                        if rel_path not in file_to_repo:
+                            if rel_path.startswith("lib/") or rel_path.startswith("lib64/"):
+                                usr_form = "usr/" + rel_path
+                                if usr_form in file_to_repo:
+                                    rel_path = usr_form
                         if rel_path in file_to_repo:
                             repo = file_to_repo[rel_path]
                             apparent_repo = repo
